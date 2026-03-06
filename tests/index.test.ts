@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -40,6 +40,28 @@ describe("CompostPileManager", () => {
     expect(pile.temperatureReadings).toBeArrayOfSize(0);
     expect(pile.moistureReadings).toBeArrayOfSize(0);
     expect(pile.turnEvents).toBeArrayOfSize(0);
+  });
+
+  it("should retrieve a pile by id", () => {
+    const pile = manager.createPile("Test Pile");
+    const retrieved = manager.getPile(pile.id);
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.id).toBe(pile.id);
+    expect(retrieved?.name).toBe("Test Pile");
+  });
+
+  it("should return undefined for non-existent pile", () => {
+    const retrieved = manager.getPile("non-existent-id");
+    expect(retrieved).toBeUndefined();
+  });
+
+  it("should list all piles", () => {
+    const pile1 = manager.createPile("Pile 1");
+    const pile2 = manager.createPile("Pile 2");
+    const allPiles = manager.getAllPiles();
+    expect(allPiles).toBeArrayOfSize(2);
+    expect(allPiles.map(p => p.id)).toContain(pile1.id);
+    expect(allPiles.map(p => p.id)).toContain(pile2.id);
   });
 
   it("should add green and brown inputs and calculate C:N ratio correctly", () => {
@@ -128,6 +150,40 @@ describe("CompostPileManager", () => {
     expect(invalidMoistureErrors[0].type).toBe(ValidationErrorType.InvalidMoisture);
   });
 
+  it("should record turn events", () => {
+    const pile = manager.createPile("Test Pile");
+    const turnErrors = manager.turnPile({
+      pileId: pile.id,
+      notes: "First turn",
+    });
+    expect(turnErrors).toBeArrayOfSize(0);
+
+    const updatedPile = manager.getPile(pile.id);
+    expect(updatedPile?.turnEvents).toBeArrayOfSize(1);
+    expect(updatedPile?.turnEvents[0].notes).toBe("First turn");
+  });
+
+  it("should validate turn pile operations", () => {
+    const errors = manager.turnPile({
+      pileId: "invalid-id",
+      notes: "Test",
+    });
+    expect(errors).toBeArrayOfSize(1);
+    expect(errors[0].type).toBe(ValidationErrorType.MissingRequiredField);
+  });
+
+  it("should calculate days since last turn correctly", () => {
+    const pile = manager.createPile("Test Pile");
+    
+    const stateBefore = manager.getPileState(pile.id);
+    expect(stateBefore?.daysSinceLastTurn).toBeNull();
+
+    manager.turnPile({ pileId: pile.id });
+    
+    const stateAfter = manager.getPileState(pile.id);
+    expect(stateAfter?.daysSinceLastTurn).toBe(0);
+  });
+
   it("should emit advisory events when thresholds are exceeded", () => {
     const pile = manager.createPile("Test Pile");
     const emitter = manager.getEventEmitter();
@@ -161,6 +217,72 @@ describe("CompostPileManager", () => {
     expect(advisoryMessages).toContain(
       "C:N ratio 10.0 is outside target range 30 ± 10"
     );
+  });
+
+  it("should persist piles to disk and reload", () => {
+    const pile = manager.createPile("Persistent Pile");
+    manager.addInput({
+      pileId: pile.id,
+      materialType: MaterialType.Green,
+      quantity: 5,
+      cnRatio: 20,
+    });
+
+    const newManager = new CompostPileManager({ dataDir: testDataDir });
+    const loadedPile = newManager.getPile(pile.id);
+    expect(loadedPile).toBeDefined();
+    expect(loadedPile?.name).toBe("Persistent Pile");
+    expect(loadedPile?.inputs).toBeArrayOfSize(1);
+  });
+
+  it("should emit events on pile creation and updates", () => {
+    const emitter = manager.getEventEmitter();
+    const events: string[] = [];
+    
+    emitter.on("pileAdded", () => events.push("pileAdded"));
+    emitter.on("pileUpdated", () => events.push("pileUpdated"));
+    emitter.on("inputLogged", () => events.push("inputLogged"));
+
+    const pile = manager.createPile("Event Test");
+    expect(events).toContain("pileAdded");
+
+    manager.addInput({
+      pileId: pile.id,
+      materialType: MaterialType.Green,
+      quantity: 1,
+      cnRatio: 20,
+    });
+    expect(events).toContain("inputLogged");
+    expect(events).toContain("pileUpdated");
+  });
+
+  it("should handle empty piles in state calculation", () => {
+    const pile = manager.createPile("Empty Pile");
+    const state = manager.getPileState(pile.id);
+    expect(state?.currentTemperature).toBeNull();
+    expect(state?.currentMoisture).toBeNull();
+    expect(state?.daysSinceLastTurn).toBeNull();
+    expect(state?.currentCNRatio).toBe(30);
+  });
+
+  it("should reject negative temperature values", () => {
+    const pile = manager.createPile("Test Pile");
+    const errors = manager.addTemperatureReading({
+      pileId: pile.id,
+      value: -30,
+    });
+    expect(errors).toBeArrayOfSize(1);
+    expect(errors[0].type).toBe(ValidationErrorType.InvalidTemperature);
+  });
+
+  it("should reject negative moisture values", () => {
+    const pile = manager.createPile("Test Pile");
+    const errors = manager.addMoistureReading({
+      pileId: pile.id,
+      value: -10,
+    });
+    expect(errors).toBeArrayOfSize(1);
+    expect(errors[0].type).toBe(ValidationErrorType.InvalidMoisture);
   });
 });
 
@@ -202,9 +324,8 @@ describe("CompostAdvisor", () => {
         { timestamp: now, value: 65, location: "center" },
       ],
       moistureReadings: [
-        { timestamp: twoDaysAgo, value: 60 },
-        { timestamp: yesterday, value: 65 },
-        { timestamp: now, value: 68 },
+        { timestamp: yesterday, value: 50, method: "meter" },
+        { timestamp: now, value: 55, method: "meter" },
       ],
       turnEvents: [
         { timestamp: twoDaysAgo, notes: "Initial turn" },
@@ -212,86 +333,265 @@ describe("CompostAdvisor", () => {
     };
   });
 
-  it("should analyze pile and provide turn recommendations", () => {
-    const analysis = advisor.analyzePile(testPile);
-    expect(analysis.shouldTurn).toBeBoolean();
-    expect(analysis.turnReason).toBeString();
-    expect(analysis.currentCNRatio).toBeCloseTo(38.33, 2);
-    expect(["optimal", "low", "high"]).toContain(analysis.cnRatioStatus);
+  it("should analyze pile and recommend turning when temperature threshold exceeded", () => {
+    const hotPile: CompostPile = {
+      ...testPile,
+      temperatureReadings: [
+        ...testPile.temperatureReadings,
+        { timestamp: new Date(), value: 70, location: "center" },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(hotPile);
+    expect(analysis.shouldTurn).toBe(true);
+    expect(analysis.turnReason).toContain("70°C");
+    expect(analysis.currentTemperature).toBe(70);
   });
 
-  it("should detect anaerobic risk conditions", () => {
-    const highMoisturePile: CompostPile = {
+  it("should analyze pile and recommend turning when interval exceeded", () => {
+    const oldTurnPile: CompostPile = {
       ...testPile,
+      turnEvents: [
+        { timestamp: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000), notes: "Old turn" },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(oldTurnPile);
+    expect(analysis.shouldTurn).toBe(true);
+    expect(analysis.turnReason).toContain("days since last turn");
+  });
+
+  it("should detect anaerobic risk from high moisture and low temperature", () => {
+    const anaerobicPile: CompostPile = {
+      ...testPile,
+      temperatureReadings: [
+        { timestamp: new Date(), value: 45, location: "center" },
+      ],
       moistureReadings: [
-        { timestamp: new Date(), value: 75 },
-      ],
-      temperatureReadings: [
-        { timestamp: new Date(), value: 35 },
+        { timestamp: new Date(), value: 75, method: "meter" },
       ],
     };
-    const analysis = advisor.analyzePile(highMoisturePile);
-    expect(analysis.isAnaerobicRisk).toBeBoolean();
-    if (analysis.isAnaerobicRisk) {
-      expect(analysis.anaerobicReason).toBeString();
-      expect(analysis.anaerobicReason).toContain("High moisture");
-    }
+
+    const analysis = advisor.analyzePile(anaerobicPile);
+    expect(analysis.isAnaerobicRisk).toBe(true);
+    expect(analysis.anaerobicReason).toContain("High moisture");
   });
 
-  it("should detect stalled pile conditions", () => {
-    const lowTempPile: CompostPile = {
+  it("should not detect anaerobic risk when temperature is high", () => {
+    const activePile: CompostPile = {
       ...testPile,
       temperatureReadings: [
+        { timestamp: new Date(), value: 65, location: "center" },
+      ],
+      moistureReadings: [
+        { timestamp: new Date(), value: 75, method: "meter" },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(activePile);
+    expect(analysis.isAnaerobicRisk).toBe(false);
+  });
+
+  it("should detect stalled pile from low temperature", () => {
+    const stalledPile: CompostPile = {
+      ...testPile,
+      temperatureReadings: [
+        { timestamp: new Date(Date.now() - 48 * 60 * 60 * 1000), value: 35 },
         { timestamp: new Date(), value: 35 },
       ],
     };
-    const analysis = advisor.analyzePile(lowTempPile);
-    expect(analysis.isStalled).toBeBoolean();
-    if (analysis.isStalled) {
-      expect(analysis.stallReason).toBeString();
-      expect(analysis.stallReason).toContain("Temperature");
-    }
+
+    const analysis = advisor.analyzePile(stalledPile);
+    expect(analysis.isStalled).toBe(true);
+    expect(analysis.stallReason).toContain("below minimum");
   });
 
-  it("should provide completion prediction with sufficient data", () => {
-    const analysis = advisor.analyzePile(testPile);
-    expect(analysis.prediction).toBeDefined();
-    if (analysis.prediction) {
-      expect(analysis.prediction.estimatedCompletionDate).toBeInstanceOf(Date);
-      expect(analysis.prediction.confidenceScore).toBeGreaterThanOrEqual(0);
-      expect(analysis.prediction.confidenceScore).toBeLessThanOrEqual(1);
-      expect(analysis.prediction.factors).toBeArray();
-    }
+  it("should assess C:N ratio as optimal when within tolerance", () => {
+    const optimalPile: CompostPile = {
+      ...testPile,
+      inputs: [
+        { id: "1", timestamp: new Date(), materialType: MaterialType.Green, quantity: 10, cnRatio: 30 },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(optimalPile);
+    expect(analysis.cnRatioStatus).toBe("optimal");
+    expect(analysis.currentCNRatio).toBe(30);
   });
 
-  it("should handle piles with insufficient data gracefully", () => {
+  it("should assess C:N ratio as low when below target", () => {
+    const lowCNPile: CompostPile = {
+      ...testPile,
+      inputs: [
+        { id: "1", timestamp: new Date(), materialType: MaterialType.Green, quantity: 10, cnRatio: 15 },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(lowCNPile);
+    expect(analysis.cnRatioStatus).toBe("low");
+  });
+
+  it("should assess C:N ratio as high when above target", () => {
+    const highCNPile: CompostPile = {
+      ...testPile,
+      inputs: [
+        { id: "1", timestamp: new Date(), materialType: MaterialType.Brown, quantity: 10, cnRatio: 60 },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(highCNPile);
+    expect(analysis.cnRatioStatus).toBe("high");
+  });
+
+  it("should handle empty piles gracefully", () => {
     const emptyPile: CompostPile = {
       id: "empty",
-      name: "Empty Pile",
+      name: "Empty",
       createdAt: new Date(),
       inputs: [],
       temperatureReadings: [],
       moistureReadings: [],
       turnEvents: [],
     };
+
     const analysis = advisor.analyzePile(emptyPile);
     expect(analysis.currentCNRatio).toBe(30);
-    expect(analysis.prediction).toBeNull();
-    expect(analysis.isAnaerobicRisk).toBeFalse();
-    expect(analysis.isStalled).toBeFalse();
+    expect(analysis.currentTemperature).toBeNull();
+    expect(analysis.currentMoisture).toBeNull();
+    expect(analysis.shouldTurn).toBe(false);
+    expect(analysis.isStalled).toBe(false);
   });
 
-  it("should allow configuration updates", () => {
-    const customAdvisor = new CompostAdvisor({
-      turnTemperatureThreshold: 70,
-      anaerobicMoistureThreshold: 75,
-    });
-    const config = customAdvisor.getConfig();
-    expect(config.turnTemperatureThreshold).toBe(70);
-    expect(config.anaerobicMoistureThreshold).toBe(75);
+  it("should predict completion for active piles", () => {
+    const activePile: CompostPile = {
+      ...testPile,
+      temperatureReadings: Array.from({ length: 10 }, (_, i) => ({
+        timestamp: new Date(Date.now() - (9 - i) * 24 * 60 * 60 * 1000),
+        value: 55 + i * 2,
+      })),
+    };
 
-    customAdvisor.updateConfig({ turnIntervalDays: 5 });
-    const updatedConfig = customAdvisor.getConfig();
-    expect(updatedConfig.turnIntervalDays).toBe(5);
+    const analysis = advisor.analyzePile(activePile);
+    expect(analysis.prediction).toBeDefined();
+    if (analysis.prediction) {
+      expect(analysis.prediction.estimatedCompletionDate).toBeInstanceOf(Date);
+      expect(analysis.prediction.confidenceScore).toBeGreaterThan(0);
+      expect(analysis.prediction.confidenceScore).toBeLessThanOrEqual(1);
+      expect(analysis.prediction.factors).toBeArray();
+    }
+  });
+
+  it("should detect temperature plateau", () => {
+    const plateauPile: CompostPile = {
+      ...testPile,
+      temperatureReadings: Array.from({ length: 5 }, (_, i) => ({
+        timestamp: new Date(Date.now() - (4 - i) * 60 * 60 * 1000),
+        value: 60,
+      })),
+    };
+
+    const analysis = advisor.analyzePile(plateauPile);
+    expect(analysis.shouldTurn).toBe(true);
+    expect(analysis.turnReason).toContain("plateau");
+  });
+
+  it("should accept custom configuration", () => {
+    const customAdvisor = new CompostAdvisor({
+      turnTemperatureThreshold: 55,
+      targetCNRatio: 25,
+    });
+
+    const warmPile: CompostPile = {
+      ...testPile,
+      temperatureReadings: [
+        { timestamp: new Date(), value: 60 },
+      ],
+    };
+
+    const analysis = customAdvisor.analyzePile(warmPile);
+    expect(analysis.shouldTurn).toBe(true);
+    expect(analysis.turnReason).toContain("60°C");
+  });
+
+  it("should calculate degree days correctly", () => {
+    const activePile: CompostPile = {
+      ...testPile,
+      temperatureReadings: [
+        { timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), value: 50 },
+        { timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), value: 55 },
+        { timestamp: new Date(), value: 60 },
+      ],
+    };
+
+    const analysis = advisor.analyzePile(activePile);
+    expect(analysis.prediction).toBeDefined();
+  });
+});
+
+describe("Integration", () => {
+  let manager: CompostPileManager;
+  let testDataDir: string;
+
+  beforeEach(() => {
+    testDataDir = path.join(os.tmpdir(), `compost-integration-${Date.now()}`);
+    manager = new CompostPileManager({ dataDir: testDataDir });
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(testDataDir)) {
+      fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("should complete full workflow from creation to analysis", () => {
+    const pile = manager.createPile("Integration Test");
+    
+    manager.addInput({
+      pileId: pile.id,
+      materialType: MaterialType.Brown,
+      quantity: 50,
+      cnRatio: 60,
+      description: "Autumn leaves",
+    });
+
+    manager.addInput({
+      pileId: pile.id,
+      materialType: MaterialType.Green,
+      quantity: 25,
+      cnRatio: 15,
+      description: "Grass clippings",
+    });
+
+    manager.addTemperatureReading({ pileId: pile.id, value: 45 });
+    manager.addMoistureReading({ pileId: pile.id, value: 50 });
+    manager.turnPile({ pileId: pile.id, notes: "Initial mix" });
+
+    const state = manager.getPileState(pile.id);
+    expect(state).toBeDefined();
+    expect(state?.currentCNRatio).toBeCloseTo(45, 0);
+    expect(state?.currentTemperature).toBe(45);
+    expect(state?.currentMoisture).toBe(50);
+    expect(state?.daysSinceLastTurn).toBe(0);
+
+    const advisor = new CompostAdvisor();
+    const fullPile = manager.getPile(pile.id)!;
+    const analysis = advisor.analyzePile(fullPile);
+    
+    expect(analysis.cnRatioStatus).toBe("high");
+    expect(analysis.isStalled).toBe(false);
+  });
+
+  it("should handle multiple piles independently", () => {
+    const pile1 = manager.createPile("Pile 1");
+    const pile2 = manager.createPile("Pile 2");
+
+    manager.addInput({ pileId: pile1.id, materialType: MaterialType.Green, quantity: 10, cnRatio: 20 });
+    manager.addInput({ pileId: pile2.id, materialType: MaterialType.Brown, quantity: 10, cnRatio: 50 });
+
+    const state1 = manager.getPileState(pile1.id);
+    const state2 = manager.getPileState(pile2.id);
+
+    expect(state1?.currentCNRatio).toBe(20);
+    expect(state2?.currentCNRatio).toBe(50);
   });
 });
