@@ -1,6 +1,6 @@
 {
   "name": "@adametherzlab/compost-tracker",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Compost pile tracker — temperature, C:N ratio, turn reminders, completion prediction",
   "type": "module",
   "main": "src/index.ts",

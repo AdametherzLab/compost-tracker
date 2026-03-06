@@ -1,7 +1,7 @@
-import * as path from "path";
-import * as fs from "fs";
-import * as crypto from "crypto";
-import { EventEmitter } from "events";
+import * as path from 'path';
+import * as fs from 'fs';
+import * as crypto from 'crypto';
+import { EventEmitter } from 'events';
 import {
   MaterialType,
   ValidationErrorType,
@@ -14,7 +14,7 @@ import {
   type CompostTrackerEvents,
   type CompostTrackerEventEmitter,
   type ValidationError,
-} from "./types";
+} from './types';
 
 export interface PileState {
   readonly pile: CompostPile;
@@ -94,7 +94,7 @@ export class CompostPileManager {
 
     this.piles.set(id, pile);
     this.savePile(pile);
-    this.emitter.emit("pileAdded", pile);
+    this.emitter.emit('pileAdded', pile);
     return pile;
   }
 
@@ -131,7 +131,7 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.MissingRequiredField,
         message: `Pile with ID ${options.pileId} not found`,
-        field: "pileId",
+        field: 'pileId',
       });
       return errors;
     }
@@ -140,7 +140,7 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.InvalidQuantity,
         message: `Quantity must be positive, got ${options.quantity}`,
-        field: "quantity",
+        field: 'quantity',
       });
     }
 
@@ -148,7 +148,7 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.InvalidCNRatio,
         message: `C:N ratio must be positive, got ${options.cnRatio}`,
-        field: "cnRatio",
+        field: 'cnRatio',
       });
     }
 
@@ -170,8 +170,8 @@ export class CompostPileManager {
 
     this.piles.set(pile.id, updatedPile);
     this.savePile(updatedPile);
-    this.emitter.emit("inputLogged", pile.id, input);
-    this.emitter.emit("pileUpdated", updatedPile);
+    this.emitter.emit('inputLogged', pile.id, input);
+    this.emitter.emit('pileUpdated', updatedPile);
     this.checkAdvisories(updatedPile);
     return [];
   }
@@ -183,7 +183,7 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.MissingRequiredField,
         message: `Pile with ID ${options.pileId} not found`,
-        field: "pileId",
+        field: 'pileId',
       });
       return errors;
     }
@@ -192,14 +192,14 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.InvalidTemperature,
         message: `Temperature must be between -20°C and 100°C, got ${options.value}°C`,
-        field: "value",
+        field: 'value',
       });
     }
 
     if (errors.length > 0) return errors;
 
     const reading: TemperatureReading = {
-      timestamp: options.timestamp ?? new Date(),
+      timestamp: options.timestamp || new Date(),
       value: options.value,
       location: options.location,
     };
@@ -211,8 +211,8 @@ export class CompostPileManager {
 
     this.piles.set(pile.id, updatedPile);
     this.savePile(updatedPile);
-    this.emitter.emit("temperatureLogged", pile.id, reading);
-    this.emitter.emit("pileUpdated", updatedPile);
+    this.emitter.emit('temperatureLogged', pile.id, reading);
+    this.emitter.emit('pileUpdated', updatedPile);
     this.checkAdvisories(updatedPile);
     return [];
   }
@@ -224,7 +224,7 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.MissingRequiredField,
         message: `Pile with ID ${options.pileId} not found`,
-        field: "pileId",
+        field: 'pileId',
       });
       return errors;
     }
@@ -233,14 +233,14 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.InvalidMoisture,
         message: `Moisture must be between 0% and 100%, got ${options.value}%`,
-        field: "value",
+        field: 'value',
       });
     }
 
     if (errors.length > 0) return errors;
 
     const reading: MoistureReading = {
-      timestamp: options.timestamp ?? new Date(),
+      timestamp: options.timestamp || new Date(),
       value: options.value,
       method: options.method,
     };
@@ -252,8 +252,8 @@ export class CompostPileManager {
 
     this.piles.set(pile.id, updatedPile);
     this.savePile(updatedPile);
-    this.emitter.emit("moistureLogged", pile.id, reading);
-    this.emitter.emit("pileUpdated", updatedPile);
+    this.emitter.emit('moistureLogged', pile.id, reading);
+    this.emitter.emit('pileUpdated', updatedPile);
     this.checkAdvisories(updatedPile);
     return [];
   }
@@ -265,13 +265,13 @@ export class CompostPileManager {
       errors.push({
         type: ValidationErrorType.MissingRequiredField,
         message: `Pile with ID ${options.pileId} not found`,
-        field: "pileId",
+        field: 'pileId',
       });
       return errors;
     }
 
     const event: TurnEvent = {
-      timestamp: options.timestamp ?? new Date(),
+      timestamp: options.timestamp || new Date(),
       notes: options.notes,
     };
 
@@ -282,8 +282,9 @@ export class CompostPileManager {
 
     this.piles.set(pile.id, updatedPile);
     this.savePile(updatedPile);
-    this.emitter.emit("pileTurned", pile.id, event);
-    this.emitter.emit("pileUpdated", updatedPile);
+    this.emitter.emit('pileTurned', pile.id, event);
+    this.emitter.emit('pileUpdated', updatedPile);
+    this.checkAdvisories(updatedPile);
     return [];
   }
 
@@ -331,47 +332,120 @@ export class CompostPileManager {
     return Math.floor(diffMs / (1000 * 60 * 60 * 24));
   }
 
-  private checkAdvisories(pile: CompostPile): void {
-    const latestTemp = this.getLatestTemperature(pile);
-    if (latestTemp !== null && latestTemp > this.advisorConfig.turnTemperatureThreshold) {
-      this.emitter.emit(
-        "advisoryTriggered",
-        pile.id,
-        `Temperature ${latestTemp}°C exceeds turn threshold of ${this.advisorConfig.turnTemperatureThreshold}°C`
-      );
+  private checkAdvisories(pile: CompostPile) {
+    const currentTemp = this.getLatestTemperature(pile);
+    const currentMoisture = this.getLatestMoisture(pile);
+    const daysSinceLastTurn = this.getDaysSinceLastTurn(pile);
+
+    // Temperature advisories
+    if (currentTemp !== null) {
+      if (currentTemp > this.advisorConfig.turnTemperatureThreshold) {
+        this.emitter.emit(
+          'advisoryTriggered',
+          pile.id,
+          `Temperature ${currentTemp}°C exceeds turn threshold of ${this.advisorConfig.turnTemperatureThreshold}°C`
+        );
+      }
+
+      if (currentTemp < this.advisorConfig.minTemperature) {
+        this.emitter.emit(
+          'advisoryTriggered',
+          pile.id,
+          `Temperature ${currentTemp}°C below minimum threshold of ${this.advisorConfig.minTemperature}°C`
+        );
+      }
+
+      if (currentTemp > this.advisorConfig.maxTemperature) {
+        this.emitter.emit(
+          'advisoryTriggered',
+          pile.id,
+          `Temperature ${currentTemp}°C exceeds maximum threshold of ${this.advisorConfig.maxTemperature}°C`
+        );
+      }
+    }
+
+    // Moisture advisories
+    if (currentMoisture !== null) {
+      if (currentMoisture > this.advisorConfig.anaerobicMoistureThreshold) {
+        this.emitter.emit(
+          'advisoryTriggered',
+          pile.id,
+          `Moisture ${currentMoisture}% exceeds anaerobic risk threshold of ${this.advisorConfig.anaerobicMoistureThreshold}%`
+        );
+      }
+    }
+
+    // Turn interval advisories
+    if (daysSinceLastTurn !== null) {
+      if (daysSinceLastTurn >= this.advisorConfig.turnIntervalDays) {
+        this.emitter.emit(
+          'advisoryTriggered',
+          pile.id,
+          `${daysSinceLastTurn} days since last turn exceeds recommended interval of ${this.advisorConfig.turnIntervalDays} days`
+        );
+      }
     }
   }
 
-  private ensureDataDir(): void {
-    if (!fs.existsSync(this.dataDir)) {
+  private ensureDataDir() {
+    try {
       fs.mkdirSync(this.dataDir, { recursive: true });
+    } catch (error) {
+      throw new Error(`Failed to create data directory '${this.dataDir}': ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  private getPilePath(pileId: string): string {
-    return path.join(this.dataDir, `${pileId}.json`);
-  }
+  private loadPiles() {
+    try {
+      const files = fs.readdirSync(this.dataDir);
+      for (const file of files) {
+        const filePath = path.join(this.dataDir, file);
+        try {
+          const data = fs.readFileSync(filePath, 'utf8');
+          const pile = JSON.parse(data, (key, value) => {
+            if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+              return new Date(value);
+            }
+            return value;
+          });
 
-  private savePile(pile: CompostPile): void {
-    const filePath = this.getPilePath(pile.id);
-    fs.writeFileSync(filePath, JSON.stringify(pile, null, 2));
-  }
+          if (!pile.id || typeof pile.id !== 'string' ||
+              !pile.name || typeof pile.name !== 'string' ||
+              !(pile.createdAt instanceof Date) ||
+              !Array.isArray(pile.inputs) || 
+              !Array.isArray(pile.temperatureReadings) ||
+              !Array.isArray(pile.moistureReadings) ||
+              !Array.isArray(pile.turnEvents)) {
+            console.error(`Invalid pile structure in ${filePath}, skipping.`);
+            continue;
+          }
 
-  private loadPiles(): void {
-    if (!fs.existsSync(this.dataDir)) return;
-    
-    const files = fs.readdirSync(this.dataDir);
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      const filePath = path.join(this.dataDir, file);
-      const content = fs.readFileSync(filePath, "utf-8");
-      const pile: CompostPile = JSON.parse(content, (key, value) => {
-        if (key === "timestamp" || key === "createdAt") {
-          return new Date(value);
+          this.piles.set(pile.id, pile);
+        } catch (error) {
+          console.error(`Error loading pile from ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
-        return value;
-      });
-      this.piles.set(pile.id, pile);
+      }
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return;
+      }
+      throw new Error(`Failed to load piles: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private savePile(pile: CompostPile) {
+    const filePath = path.join(this.dataDir, `${pile.id}.json`);
+    const data = JSON.stringify(pile, (key, value) => {
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+      return value;
+    });
+
+    try {
+      fs.writeFileSync(filePath, data, { encoding: 'utf8', flag: 'w' });
+    } catch (error) {
+      throw new Error(`Failed to save pile ${pile.id} to ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 }
