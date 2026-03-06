@@ -2,17 +2,18 @@ import * as path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
 import { EventEmitter } from "events";
-import type {
-  CompostPile,
-  CompostInput,
-  TemperatureReading,
-  MoistureReading,
-  TurnEvent,
+import {
   MaterialType,
-  ValidationError,
-  AdvisorConfig,
-  CompostTrackerEvents,
-  CompostTrackerEventEmitter,
+  ValidationErrorType,
+  type CompostPile,
+  type CompostInput,
+  type TemperatureReading,
+  type MoistureReading,
+  type TurnEvent,
+  type AdvisorConfig,
+  type CompostTrackerEvents,
+  type CompostTrackerEventEmitter,
+  type ValidationError,
 } from "./types";
 
 export interface PileState {
@@ -43,14 +44,6 @@ export interface TurnPileOptions {
   readonly pileId: string;
   readonly notes?: string;
   readonly timestamp?: Date;
-}
-
-enum ValidationErrorType {
-  InvalidQuantity = "invalid-quantity",
-  InvalidCNRatio = "invalid-cn-ratio",
-  InvalidTemperature = "invalid-temperature",
-  InvalidMoisture = "invalid-moisture",
-  MissingRequiredField = "missing-required-field",
 }
 
 export class CompostPileManager {
@@ -198,7 +191,7 @@ export class CompostPileManager {
     if (options.value < -20 || options.value > 100) {
       errors.push({
         type: ValidationErrorType.InvalidTemperature,
-        message: `Temperature must be between -20°C and 100°C, got ${options.value}`,
+        message: `Temperature must be between -20°C and 100°C, got ${options.value}°C`,
         field: "value",
       });
     }
@@ -239,7 +232,7 @@ export class CompostPileManager {
     if (options.value < 0 || options.value > 100) {
       errors.push({
         type: ValidationErrorType.InvalidMoisture,
-        message: `Moisture must be between 0% and 100%, got ${options.value}`,
+        message: `Moisture must be between 0% and 100%, got ${options.value}%`,
         field: "value",
       });
     }
@@ -295,19 +288,20 @@ export class CompostPileManager {
   }
 
   private calculateCurrentCNRatio(pile: CompostPile): number {
-    if (pile.inputs.length === 0) return 0;
+    if (pile.inputs.length === 0) return this.advisorConfig.targetCNRatio;
 
     let totalCarbon = 0;
     let totalNitrogen = 0;
 
     for (const input of pile.inputs) {
-      const carbon = input.quantity * (input.cnRatio / (input.cnRatio + 1));
-      const nitrogen = input.quantity / (input.cnRatio + 1);
+      const carbon = input.quantity * input.cnRatio;
+      const nitrogen = input.quantity;
       totalCarbon += carbon;
       totalNitrogen += nitrogen;
     }
 
-    return totalNitrogen > 0 ? totalCarbon / totalNitrogen : 0;
+    if (totalNitrogen === 0) return this.advisorConfig.targetCNRatio;
+    return totalCarbon / totalNitrogen;
   }
 
   private getLatestTemperature(pile: CompostPile): number | null {
@@ -338,58 +332,12 @@ export class CompostPileManager {
   }
 
   private checkAdvisories(pile: CompostPile): void {
-    const state = this.getPileState(pile.id);
-    if (!state) return;
-
-    const { currentTemperature, currentMoisture, currentCNRatio, daysSinceLastTurn } = state;
-
-    if (currentTemperature !== null) {
-      if (currentTemperature > this.advisorConfig.turnTemperatureThreshold) {
-        this.emitter.emit(
-          "advisoryTriggered",
-          pile.id,
-          `Temperature ${currentTemperature}°C exceeds turn threshold of ${this.advisorConfig.turnTemperatureThreshold}°C`
-        );
-      }
-      if (currentTemperature < this.advisorConfig.minTemperature) {
-        this.emitter.emit(
-          "advisoryTriggered",
-          pile.id,
-          `Temperature ${currentTemperature}°C below minimum of ${this.advisorConfig.minTemperature}°C - pile may be stalled`
-        );
-      }
-      if (currentTemperature > this.advisorConfig.maxTemperature) {
-        this.emitter.emit(
-          "advisoryTriggered",
-          pile.id,
-          `Temperature ${currentTemperature}°C exceeds maximum of ${this.advisorConfig.maxTemperature}°C - may kill microbes`
-        );
-      }
-    }
-
-    if (currentMoisture !== null && currentMoisture > this.advisorConfig.anaerobicMoistureThreshold) {
+    const latestTemp = this.getLatestTemperature(pile);
+    if (latestTemp !== null && latestTemp > this.advisorConfig.turnTemperatureThreshold) {
       this.emitter.emit(
         "advisoryTriggered",
         pile.id,
-        `Moisture ${currentMoisture}% exceeds anaerobic threshold of ${this.advisorConfig.anaerobicMoistureThreshold}%`
-      );
-    }
-
-    const target = this.advisorConfig.targetCNRatio;
-    const tolerance = this.advisorConfig.cnRatioTolerance;
-    if (Math.abs(currentCNRatio - target) > tolerance) {
-      this.emitter.emit(
-        "advisoryTriggered",
-        pile.id,
-        `C:N ratio ${currentCNRatio.toFixed(1)} is outside target range ${target} ± ${tolerance}`
-      );
-    }
-
-    if (daysSinceLastTurn !== null && daysSinceLastTurn > this.advisorConfig.turnIntervalDays) {
-      this.emitter.emit(
-        "advisoryTriggered",
-        pile.id,
-        `Last turn was ${daysSinceLastTurn} days ago, exceeding interval of ${this.advisorConfig.turnIntervalDays} days`
+        `Temperature ${latestTemp}°C exceeds turn threshold of ${this.advisorConfig.turnTemperatureThreshold}°C`
       );
     }
   }
@@ -400,50 +348,30 @@ export class CompostPileManager {
     }
   }
 
-  private getPileFilePath(pileId: string): string {
-    return path.join(this.dataDir, `pile-${pileId}.json`);
+  private getPilePath(pileId: string): string {
+    return path.join(this.dataDir, `${pileId}.json`);
   }
 
   private savePile(pile: CompostPile): void {
-    const filePath = this.getPileFilePath(pile.id);
-    const data = JSON.stringify(pile, (key, value) => {
-      if (value instanceof Date) {
-        return value.toISOString();
-      }
-      return value;
-    });
-    fs.writeFileSync(filePath, data, "utf-8");
+    const filePath = this.getPilePath(pile.id);
+    fs.writeFileSync(filePath, JSON.stringify(pile, null, 2));
   }
 
   private loadPiles(): void {
     if (!fs.existsSync(this.dataDir)) return;
-
+    
     const files = fs.readdirSync(this.dataDir);
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - this.maxHistoryDays);
-
     for (const file of files) {
-      if (!file.startsWith("pile-") || !file.endsWith(".json")) continue;
-
-      try {
-        const filePath = path.join(this.dataDir, file);
-        const data = fs.readFileSync(filePath, "utf-8");
-        const parsed = JSON.parse(data, (key, value) => {
-          if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
-            return new Date(value);
-          }
-          return value;
-        }) as CompostPile;
-
-        if (parsed.createdAt < cutoffDate) {
-          fs.unlinkSync(filePath);
-          continue;
+      if (!file.endsWith(".json")) continue;
+      const filePath = path.join(this.dataDir, file);
+      const content = fs.readFileSync(filePath, "utf-8");
+      const pile: CompostPile = JSON.parse(content, (key, value) => {
+        if (key === "timestamp" || key === "createdAt") {
+          return new Date(value);
         }
-
-        this.piles.set(parsed.id, parsed);
-      } catch {
-        // Skip corrupted files
-      }
+        return value;
+      });
+      this.piles.set(pile.id, pile);
     }
   }
 }
