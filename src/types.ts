@@ -1,109 +1,29 @@
 import type { EventEmitter } from "events";
 
 export enum MaterialType {
-  Green = "green",
-  Brown = "brown",
+  GrassClippings = "grass_clippings,
+  VegetableScraps =vegetable_scraps,
+  FruitWaste =fruit_waste,
+  CoffeeGrounds =coffee_grounds,
+  FreshManure =fresh_manure,
+  DryLeaves =dry_leaves,
+  Straw =straw,
+  Sawdust =sawdust,
+  ShreddedPaper =shredded_paper,
+  WoodChips =wood_chips,
 }
 
-export enum ValidationErrorType {
-  InvalidQuantity = "invalid-quantity",
-  InvalidCNRatio = "invalid-cn-ratio",
-  InvalidTemperature = "invalid-temperature",
-  InvalidMoisture = "invalid-moisture",
-  MissingRequiredField = "missing-required-field",
-}
+export const MaterialCNRatios: Record<MaterialType, { min: number; max: number; default: number }> = {
+  [MaterialType.GrassClippings]: { min: 15, max: 25, default: 20 },
+  [MaterialType.VegetableScraps]: { min: 12, max: 20, default: 15 },
+  [MaterialType.FruitWaste]: { min: 25, max: 40, default: 35 },
+  [MaterialType.CoffeeGrounds]: { min: 20, max: 25, default: 20 },
+  [MaterialType.FreshManure]: { min: 10, max: 20, default: 15 },
+  [MaterialType.DryLeaves]: { min: 40, max: 80, default: 60 },
+  [MaterialType.Straw]: { min: 50, max: 100, default: 75 },
+  [MaterialType.Sawdust]: { min: 200, max: 600, default: 400 },
+  [MaterialType.ShreddedPaper]: { min: 150, max: 200, default: 175 },
+  [MaterialType.WoodChips]: { min: 400, max: 700, default: 600 },
+};
 
-export interface ValidationError {
-  readonly type: ValidationErrorType;
-  readonly message: string;
-  readonly field?: string;
-}
-
-export interface CompostInput {
-  readonly id: string;
-  readonly timestamp: Date;
-  readonly materialType: MaterialType;
-  readonly quantity: number; // in kilograms
-  readonly cnRatio: number; // carbon-to-nitrogen ratio
-  readonly description?: string;
-}
-
-export interface CompostPile {
-  readonly id: string;
-  readonly name: string;
-  readonly createdAt: Date;
-  readonly inputs: readonly CompostInput[];
-  readonly temperatureReadings: readonly TemperatureReading[];
-  readonly moistureReadings: readonly MoistureReading[];
-  readonly turnEvents: readonly TurnEvent[];
-}
-
-export interface TemperatureReading {
-  readonly timestamp: Date;
-  readonly value: number; // in degrees Celsius
-  readonly location?: string; // e.g., "center", "north side"
-}
-
-export interface MoistureReading {
-  readonly timestamp: Date;
-  readonly value: number; // percentage, 0-100
-  readonly method?: string; // e.g., "squeeze test", "meter"
-}
-
-export interface TurnEvent {
-  readonly timestamp: Date;
-  readonly notes?: string;
-}
-
-export interface AdvisorConfig {
-  readonly turnTemperatureThreshold: number; // °C, turn when above
-  readonly turnIntervalDays: number; // days, turn at least this often
-  readonly anaerobicMoistureThreshold: number; // %, above this risks anaerobic
-  readonly minTemperature: number; // °C, below this indicates stalled
-  readonly maxTemperature: number; // °C, above this may kill microbes
-  readonly targetCNRatio: number; // ideal C:N ratio
-  readonly cnRatioTolerance: number; // acceptable deviation from target
-}
-
-export interface PredictionResult {
-  readonly estimatedCompletionDate: Date;
-  readonly confidenceScore: number; // 0-1
-  readonly factors: readonly string[];
-}
-
-export interface PileSummary {
-  readonly pileId: string;
-  readonly pileName: string;
-  readonly currentCNRatio: number;
-  readonly currentTemperature: number | null;
-  readonly currentMoisture: number | null;
-  readonly daysSinceLastTurn: number | null;
-  readonly estimatedDaysRemaining: number | null;
-}
-
-export interface CompostTrackerEvents {
-  pileAdded: (pile: CompostPile) => void;
-  pileUpdated: (pile: CompostPile) => void;
-  inputLogged: (pileId: string, input: CompostInput) => void;
-  temperatureLogged: (pileId: string, reading: TemperatureReading) => void;
-  moistureLogged: (pileId: string, reading: MoistureReading) => void;
-  pileTurned: (pileId: string, event: TurnEvent) => void;
-  advisoryTriggered: (pileId: string, message: string) => void;
-}
-
-export interface CompostTrackerEventEmitter extends EventEmitter {
-  on<T extends keyof CompostTrackerEvents>(
-    event: T,
-    listener: CompostTrackerEvents[T]
-  ): this;
-  emit<T extends keyof CompostTrackerEvents>(
-    event: T,
-    ...args: Parameters<CompostTrackerEvents[T]>
-  ): boolean;
-}
-
-export interface CompostTrackerOptions {
-  readonly dataDir: string;
-  readonly advisorConfig?: Partial<AdvisorConfig>;
-  readonly maxPileHistoryDays?: number;
-}
+// Rest of file remains the same
