@@ -144,10 +144,10 @@ export class CompostPileManager {
       });
     }
 
-    if (options.cnRatio <= 0) {
+    if (options.cnRatio < 1 || options.cnRatio > 1000) {
       errors.push({
         type: ValidationErrorType.InvalidCNRatio,
-        message: `C:N ratio must be positive, got ${options.cnRatio}`,
+        message: `C:N ratio must be between 1 and 1000, got ${options.cnRatio}`,
         field: 'cnRatio',
       });
     }
@@ -199,7 +199,7 @@ export class CompostPileManager {
     if (errors.length > 0) return errors;
 
     const reading: TemperatureReading = {
-      timestamp: new Date(),
+      timestamp: options.timestamp ?? new Date(),
       value: options.value,
       location: options.location,
     };
@@ -217,45 +217,75 @@ export class CompostPileManager {
     return [];
   }
 
-  private ensureDataDir() {
-    try {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    } catch (err) {
-      console.error(`Failed to create data directory: ${this.dataDir}`, err);
+  addMoistureReading(options: AddReadingOptions): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const pile = this.piles.get(options.pileId);
+    if (!pile) {
+      errors.push({
+        type: ValidationErrorType.MissingRequiredField,
+        message: `Pile with ID ${options.pileId} not found`,
+        field: 'pileId',
+      });
+      return errors;
     }
+
+    if (options.value < 0 || options.value > 100) {
+      errors.push({
+        type: ValidationErrorType.InvalidMoisture,
+        message: `Moisture must be between 0% and 100%, got ${options.value}%`,
+        field: 'value',
+      });
+    }
+
+    if (errors.length > 0) return errors;
+
+    const reading: MoistureReading = {
+      timestamp: options.timestamp ?? new Date(),
+      value: options.value,
+      method: options.method,
+    };
+
+    const updatedPile: CompostPile = {
+      ...pile,
+      moistureReadings: [...pile.moistureReadings, reading],
+    };
+
+    this.piles.set(pile.id, updatedPile);
+    this.savePile(updatedPile);
+    this.emitter.emit('moistureLogged', pile.id, reading);
+    this.emitter.emit('pileUpdated', updatedPile);
+    this.checkAdvisories(updatedPile);
+    return [];
   }
 
-  private loadPiles() {
-    try {
-      const files = fs.readdirSync(this.dataDir);
-      for (const file of files) {
-        if (!file.endsWith('.json')) continue;
-        const filePath = path.join(this.dataDir, file);
-        
-        try {
-          const data = fs.readFileSync(filePath, 'utf8');
-          const pile = JSON.parse(data, (key, value) => {
-            if (key === 'createdAt' || key === 'timestamp') return new Date(value);
-            return value;
-          });
-          this.piles.set(pile.id, pile);
-        } catch (err) {
-          console.error(`Error loading pile from ${filePath}:`, err);
-        }
-      }
-    } catch (err) {
-      console.error(`Error reading data directory ${this.dataDir}:`, err);
+  turnPile(options: TurnPileOptions): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const pile = this.piles.get(options.pileId);
+    if (!pile) {
+      errors.push({
+        type: ValidationErrorType.MissingRequiredField,
+        message: `Pile with ID ${options.pileId} not found`,
+        field: 'pileId',
+      });
+      return errors;
     }
-  }
 
-  private savePile(pile: CompostPile) {
-    const filePath = path.join(this.dataDir, `${pile.id}.json`);
-    try {
-      const data = JSON.stringify(pile, null, 2);
-      fs.writeFileSync(filePath, data, 'utf8');
-    } catch (err) {
-      console.error(`Failed to save pile ${pile.id} to ${filePath}:`, err);
-    }
+    const event: TurnEvent = {
+      timestamp: options.timestamp ?? new Date(),
+      notes: options.notes,
+    };
+
+    const updatedPile: CompostPile = {
+      ...pile,
+      turnEvents: [...pile.turnEvents, event],
+    };
+
+    this.piles.set(pile.id, updatedPile);
+    this.savePile(updatedPile);
+    this.emitter.emit('pileTurned', pile.id, event);
+    this.emitter.emit('pileUpdated', updatedPile);
+    this.checkAdvisories(updatedPile);
+    return [];
   }
 
   private calculateCurrentCNRatio(pile: CompostPile): number {
@@ -265,44 +295,82 @@ export class CompostPileManager {
     let totalNitrogen = 0;
 
     for (const input of pile.inputs) {
-      const carbon = input.quantity * input.cnRatio;
-      const nitrogen = input.quantity;
-      totalCarbon += carbon;
-      totalNitrogen += nitrogen;
+      totalCarbon += input.quantity * input.cnRatio;
+      totalNitrogen += input.quantity;
     }
 
-    if (totalNitrogen === 0) return this.advisorConfig.targetCNRatio;
     return totalCarbon / totalNitrogen;
   }
 
   private getLatestTemperature(pile: CompostPile): number | null {
     if (pile.temperatureReadings.length === 0) return null;
-    const sorted = [...pile.temperatureReadings].sort(
-      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
-    );
-    return sorted[0].value;
+    return [...pile.temperatureReadings]
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())[0].value;
   }
 
   private getLatestMoisture(pile: CompostPile): number | null {
     if (pile.moistureReadings.length === 0) return null;
-    const sorted = [...pile.moistureReadings].sort(
-      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
-    );
-    return sorted[0].value;
+    return [...pile.moistureReadings]
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())[0].value;
   }
 
   private getDaysSinceLastTurn(pile: CompostPile): number | null {
     if (pile.turnEvents.length === 0) return null;
-    const sorted = [...pile.turnEvents].sort(
-      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+    const lastTurn = [...pile.turnEvents]
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())[0].timestamp;
+    return Math.floor(
+      (Date.now() - lastTurn.getTime()) / (1000 * 60 * 60 * 24)
     );
-    const lastTurn = sorted[0].timestamp;
-    const now = new Date();
-    const diffMs = now.getTime() - lastTurn.getTime();
-    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
   }
 
-  private checkAdvisories(pile: CompostPile) {
-    // Existing implementation
+  private checkAdvisories(pile: CompostPile): void {
+    const currentCN = this.calculateCurrentCNRatio(pile);
+    const target = this.advisorConfig.targetCNRatio;
+    const tolerance = this.advisorConfig.cnRatioTolerance;
+
+    if (Math.abs(currentCN - target) > tolerance) {
+      this.emitter.emit(
+        'advisoryTriggered',
+        pile.id,
+        `C:N ratio deviation (current: ${currentCN.toFixed(1)}, target: ${target} ± ${tolerance})`
+      );
+    }
+
+    const temp = this.getLatestTemperature(pile);
+    if (temp !== null && temp > this.advisorConfig.turnTemperatureThreshold) {
+      this.emitter.emit(
+        'advisoryTriggered',
+        pile.id,
+        `High temperature (${temp}°C) detected`
+      );
+    }
+  }
+
+  private ensureDataDir(): void {
+    if (!fs.existsSync(this.dataDir)) {
+      fs.mkdirSync(this.dataDir, { recursive: true });
+    }
+  }
+
+  private savePile(pile: CompostPile): void {
+    const filePath = path.join(this.dataDir, `${pile.id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(pile, null, 2), 'utf8');
+  }
+
+  private loadPiles(): void {
+    const files = fs.readdirSync(this.dataDir);
+    files.forEach(file => {
+      if (path.extname(file) === '.json') {
+        const filePath = path.join(this.dataDir, file);
+        const data = fs.readFileSync(filePath, 'utf8');
+        const pile = JSON.parse(data, (key, value) => {
+          if (key === 'createdAt' || key === 'timestamp') {
+            return new Date(value);
+          }
+          return value;
+        }) as CompostPile;
+        this.piles.set(pile.id, pile);
+      }
+    });
   }
 }
