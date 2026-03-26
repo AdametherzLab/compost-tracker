@@ -1,5 +1,3 @@
-import * as path from "path";
-import * as fs from "fs";
 import type {
   AdvisorConfig,
   CompostPile,
@@ -27,6 +25,7 @@ export interface DegreeDayAccumulator {
   averageDailyTemp: number;
 }
 
+/** Analyzes compost pile health and provides actionable recommendations. */
 export class CompostAdvisor {
   private readonly config: AdvisorConfig;
 
@@ -43,6 +42,7 @@ export class CompostAdvisor {
     };
   }
 
+  /** Returns a full analysis of the pile's current state and health. */
   public analyzePile(pile: CompostPile): AdvisorAnalysis {
     const currentTemp = this.getLatestTemperature(pile);
     const currentMoisture = this.getLatestMoisture(pile);
@@ -321,10 +321,12 @@ export class CompostAdvisor {
     };
   }
 
+  /** Returns a copy of the current advisor configuration. */
   public getConfig(): AdvisorConfig {
     return { ...this.config };
   }
 
+  /** Merges partial config updates into the current configuration. */
   public updateConfig(newConfig: Partial<AdvisorConfig>): void {
     Object.assign(this.config, newConfig);
   }

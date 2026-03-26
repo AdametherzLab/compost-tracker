@@ -45,6 +45,7 @@ export interface TurnPileOptions {
   notes?: string;
 }
 
+/** Manages compost piles, inputs, readings, and turn events. */
 export class CompostPileManager extends EventEmitter {
   private piles: Map<string, CompostPile> = new Map();
   private readonly defaultTargetCNRatio: number;
@@ -54,9 +55,7 @@ export class CompostPileManager extends EventEmitter {
     this.defaultTargetCNRatio = options.targetCNRatio ?? 30;
   }
 
-  /**
-   * Creates a new compost pile
-   */
+  /** Creates a new compost pile and returns it. */
   createPile(name: string, options?: Partial<CompostPile>): CompostPile {
     const pile: CompostPile = {
       id: crypto.randomUUID(),
@@ -75,16 +74,12 @@ export class CompostPileManager extends EventEmitter {
     return pile;
   }
 
-  /**
-   * Retrieves a pile by ID
-   */
+  /** Retrieves a pile by ID. */
   getPile(id: string): CompostPile | undefined {
     return this.piles.get(id);
   }
 
-  /**
-   * Gets current state summary of a pile
-   */
+  /** Gets current state summary of a pile. */
   getPileState(pileId: string): PileState | null {
     const pile = this.piles.get(pileId);
     if (!pile) return null;
@@ -115,9 +110,7 @@ export class CompostPileManager extends EventEmitter {
     };
   }
 
-  /**
-   * Adds an input to a pile. Supports both predefined MaterialTypes and custom materials.
-   */
+  /** Adds a material input to a pile. Supports predefined and custom materials. Returns validation errors (empty on success). */
   addInput(options: AddInputOptions): ValidationError[] {
     const errors: ValidationError[] = [];
     
@@ -139,16 +132,13 @@ export class CompostPileManager extends EventEmitter {
       });
     }
 
-    // Determine material configuration
     let materialConfig: { min: number; max: number; default: number } | undefined;
     let isCustom = false;
     
     if (options.customMaterial) {
-      // Use provided custom material definition
       materialConfig = options.customMaterial.cnRatio;
       isCustom = true;
     } else if (Object.values(MaterialType).includes(options.materialType as MaterialType)) {
-      // Use predefined material
       materialConfig = MaterialCNRatios[options.materialType as MaterialType];
     } else {
       errors.push({
@@ -170,7 +160,6 @@ export class CompostPileManager extends EventEmitter {
 
     const cnRatio = options.cnRatio ?? materialConfig.default;
 
-    // Validate C:N ratio is within allowed range
     if (cnRatio < materialConfig.min || cnRatio > materialConfig.max) {
       errors.push({
         type: ValidationErrorType.InvalidCNRatio,
@@ -199,9 +188,7 @@ export class CompostPileManager extends EventEmitter {
     return [];
   }
 
-  /**
-   * Adds a temperature or moisture reading to a pile
-   */
+  /** Adds a temperature or moisture reading to a pile. */
   addReading(options: AddReadingOptions): ValidationError[] {
     const errors: ValidationError[] = [];
     const pile = this.piles.get(options.pileId);
@@ -233,9 +220,7 @@ export class CompostPileManager extends EventEmitter {
     return [];
   }
 
-  /**
-   * Records a pile turning event
-   */
+  /** Records a pile turning event. */
   turnPile(options: TurnPileOptions): ValidationError[] {
     const errors: ValidationError[] = [];
     const pile = this.piles.get(options.pileId);
